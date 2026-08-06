@@ -7,6 +7,12 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-06
+
+### Changed
+
+- Reworked the README as concise, user-focused documentation.
+
 ## [0.1.0] - 2026-08-06
 
 ### Added
@@ -18,5 +24,6 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - `WithStatus` option and exported `DefaultStatus` to map runs to custom status codes.
 - Fx integration in `otelbeat/otelbeatfx`: `otelbeatfx.Module` provides the `beat.Handler` from the container's `metric.MeterProvider`; the core `otelbeat` package has no Fx dependency.
 
-[Unreleased]: https://github.com/uchaloop/otelbeat/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/uchaloop/otelbeat/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/uchaloop/otelbeat/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/uchaloop/otelbeat/releases/tag/v0.1.0
