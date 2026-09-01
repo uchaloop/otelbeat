@@ -7,6 +7,16 @@ and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-01
+
+### Changed
+
+- The package documentation carries what each instrument means, how a run is
+  classified into its status, and why the attributes stop at two; the README is a
+  landing page.
+- The module is built with Go 1.27. A module that depends on this one has to
+  declare 1.27 as well.
+
 ## [0.1.1] - 2026-08-06
 
 ### Changed

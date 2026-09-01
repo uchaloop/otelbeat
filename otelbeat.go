@@ -1,15 +1,60 @@
-// Package otelbeat records OpenTelemetry metrics for a beat.Beat. It implements
-// beat.Handler and, per run, records two instruments on a meter the application
-// supplies:
-//
-//   - beat.run.duration (histogram, seconds) - its count also gives the number
-//     of runs;
-//   - beat.processed (counter) - items processed, summed.
-//
-// Both carry the attributes "status" and "mode", so a single query sliced by
-// those labels covers success/error/panic counts, latency and throughput per
-// scheduling mode. The application owns the MeterProvider and its
-// exporter/reader; otelbeat records, it does not export.
+/*
+Package otelbeat records OpenTelemetry metrics for a beat.Beat. It implements
+beat.Handler, which beat calls once per run with a Record, and turns that into
+two instruments on a meter the application supplies.
+
+	handler, err := otelbeat.New(meterProvider.Meter("beat"))
+
+The otelbeatfx subpackage wires the same handler into an Uber Fx application.
+
+# What is recorded
+
+  - beat.run.duration - a float64 histogram in seconds. Its count is also the
+    number of runs, so duration and rate come from one instrument rather than a
+    histogram plus a counter that could disagree.
+  - beat.processed - an int64 counter of the items a run reported processing.
+
+Both carry two attributes, and only two:
+
+  - status - "ok", "error" or "panic";
+  - mode - "interval" or "cron", the scheduling beat is running under.
+
+That is enough for one query sliced by those labels to answer success and error
+counts, latency and throughput per scheduling mode, and few enough that the
+cardinality stays a constant rather than a function of the workload.
+
+The "panic" status appears only when beat's recovery middleware is installed: it
+is what converts a panic into a *beat.PanicError for the Record to carry.
+Without it a panic crashes the process, which is beat's deliberate default, and
+there is no run to record.
+
+# Classifying a run
+
+DefaultStatus maps a Record to one of the three values above. WithStatus
+replaces it, for an application whose errors deserve to be told apart:
+
+	handler, err := otelbeat.New(
+		meter,
+		otelbeat.WithStatus(func(record beat.Record) string {
+			switch {
+			case errors.Is(record.Err, ErrThrottled):
+				return "throttled"
+			default:
+				return otelbeat.DefaultStatus(record)
+			}
+		}),
+	)
+
+Keep the set of values small and closed. Every distinct status is a time series
+per instrument, so one derived from an error message rather than from a sentinel
+turns a metric into a cardinality incident.
+
+# What it does not do
+
+The application owns the MeterProvider and whatever exports from it. otelbeat
+records; it does not configure, aggregate or export, and it holds no opinion
+about where the metrics go.
+*/
 package otelbeat
 
 import (
