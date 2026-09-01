@@ -2,21 +2,22 @@
 
 [![CI](https://github.com/uchaloop/otelbeat/actions/workflows/ci.yml/badge.svg)](https://github.com/uchaloop/otelbeat/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/uchaloop/otelbeat.svg)](https://pkg.go.dev/github.com/uchaloop/otelbeat)
-[![License: MIT](https://img.shields.io/badge/github/license/uchaloop/otelbeat)](LICENSE)
+[![License: MIT](https://img.shields.io/github/license/uchaloop/otelbeat)](LICENSE)
 
 OpenTelemetry metrics for scheduled jobs running with
-[`beat`](https://github.com/uchaloop/beat).
+[beat](https://github.com/uchaloop/beat). It implements `beat.Handler`, which
+beat calls once per run.
 
-## Installation
+- **Two instruments, two attributes** - enough to answer rate, errors, latency
+  and throughput, few enough that cardinality stays constant.
+- **The application owns the pipeline** - otelbeat records, it does not
+  configure, aggregate or export.
 
 ```bash
 go get github.com/uchaloop/otelbeat
 ```
 
-## Fx
-
-Provide a `metric.MeterProvider`, then install the metrics handler before the
-beat module:
+## Quick start
 
 ```go
 fx.New(
@@ -26,76 +27,33 @@ fx.New(
 )
 ```
 
-## Without Fx
+Without Fx:
 
 ```go
-handler, err := otelbeat.New(
-	meterProvider.Meter("beat"),
-)
+handler, err := otelbeat.New(meterProvider.Meter("beat"))
 ```
 
-The returned value implements `beat.Handler`.
+## What it records
 
-## Metrics
-
-| Instrument | Type | Description |
+| Instrument | Type | What it answers |
 |---|---|---|
-| `beat.run.duration` | Float64 histogram, seconds | Job duration and run count |
-| `beat.processed` | Int64 counter, items | Number of processed items |
+| `beat.run.duration` | float64 histogram, seconds | Duration, and run count through its own count |
+| `beat.processed` | int64 counter, items | Throughput |
 
-Both instruments include:
-
-- `status`: `ok`, `error`, or `panic`;
-- `mode`: `interval` or `cron`.
-
-The `panic` status is available when beat's recovery middleware converts the
-panic into `*beat.PanicError`.
-
-## Custom status
-
-Map application errors to custom status values:
-
-```go
-handler, err := otelbeat.New(
-	meter,
-	otelbeat.WithStatus(func(record beat.Record) string {
-		switch {
-		case errors.Is(record.Err, ErrThrottled):
-			return "throttled"
-		default:
-			return otelbeat.DefaultStatus(record)
-		}
-	}),
-)
-```
-
-Keep the number of status values small to avoid high-cardinality metrics.
-
-## Prometheus queries
-
-Run rate:
+Both carry `status` (`ok`, `error`, `panic`) and `mode` (`interval`, `cron`).
 
 ```promql
-rate(beat_run_duration_seconds_count[5m])
-```
-
-Error rate:
-
-```promql
-rate(beat_run_duration_seconds_count{status="error"}[5m])
-```
-
-P95 duration:
-
-```promql
+rate(beat_run_duration_seconds_count[5m])                    # runs
+rate(beat_run_duration_seconds_count{status="error"}[5m])    # failures
 histogram_quantile(0.95, sum by (le) (rate(beat_run_duration_seconds_bucket[5m])))
+rate(beat_processed_total[5m])                               # items
 ```
 
-Processing throughput:
+## Documentation
 
-```promql
-rate(beat_processed_total[5m])
-```
+What each instrument means, how a run is classified, and why the attributes stop
+at two are in the package documentation:
+**[pkg.go.dev/github.com/uchaloop/otelbeat](https://pkg.go.dev/github.com/uchaloop/otelbeat)**.
 
 ## Acknowledgements
 

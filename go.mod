@@ -1,6 +1,6 @@
 module github.com/uchaloop/otelbeat
 
-go 1.26.1
+go 1.27
 
 require (
 	github.com/uchaloop/beat v0.1.0
