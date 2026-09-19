@@ -1,39 +1,44 @@
 # Changelog
 
-All notable changes to this module are documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this module adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ## [Unreleased]
 
-## [0.2.0] - 2026-09-01
+## [0.3.0] - 2026-09-19
 
-### Changed
+Requires beat 0.4.0.
 
-- The package documentation carries what each instrument means, how a run is
-  classified into its status, and why the attributes stop at two; the README is a
-  landing page.
-- The module is built with Go 1.27. A module that depends on this one has to
-  declare 1.27 as well.
+### Breaking changes
 
-## [0.1.1] - 2026-08-06
-
-### Changed
-
-- Reworked the README as concise, user-focused documentation.
-
-## [0.1.0] - 2026-08-06
+- Replaced `status` with `outcome`, using `Record.Outcome`.
+- Renamed `StatusFunc`, `WithStatus` and `DefaultStatus` to their Outcome equivalents.
+- Mode values are `fixed_rate` and `fixed_delay`.
 
 ### Added
 
-- Initial release: `otelbeat` implements `beat.Handler` and records OpenTelemetry metrics for a `beat` scheduler.
-- `beat.run.duration` histogram (seconds) - its count also gives the number of runs.
-- `beat.processed` counter - items processed, summed.
-- `status` (`ok`/`error`/`panic`) and `mode` (`interval`/`cron`) attributes on both instruments.
-- `WithStatus` option and exported `DefaultStatus` to map runs to custom status codes.
-- Fx integration in `otelbeat/otelbeatfx`: `otelbeatfx.Module` provides the `beat.Handler` from the container's `metric.MeterProvider`; the core `otelbeat` package has no Fx dependency.
+- `beat.run.saturation` and `beat.run.lateness` histograms.
+- `beat.missed` counter with only the mode attribute; excludes intentional backoff.
+- Explicit advisory boundaries for all histograms.
+- Provider wiring examples, telemetry diagram and metric interpretation guide.
 
-[Unreleased]: https://github.com/uchaloop/otelbeat/compare/v0.1.1...HEAD
+### Fixed
+
+- Empty outcomes use `unknown`. Negative counters and lateness are clamped to zero.
+- Missing Period or ScheduledFor omits the corresponding derived measurement.
+
+## [0.2.0] - 2026-09-01
+
+- Required Go 1.27 and expanded package documentation.
+
+## [0.1.1] - 2026-08-06
+
+- Updated README.
+
+## [0.1.0] - 2026-08-06
+
+- Initial release: duration histogram, processed counter, custom status
+  classification and Fx integration.
+
+[Unreleased]: https://github.com/uchaloop/otelbeat/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/uchaloop/otelbeat/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/uchaloop/otelbeat/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/uchaloop/otelbeat/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/uchaloop/otelbeat/releases/tag/v0.1.0
