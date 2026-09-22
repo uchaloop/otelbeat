@@ -2,410 +2,207 @@ package otelbeat_test
 
 import (
 	"context"
-	"errors"
-	"slices"
+	"math"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/uchaloop/beat"
+	"github.com/uchaloop/job"
 	"github.com/uchaloop/otelbeat"
-	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-// collect builds a handler over a manual reader, hands it every record, and
-// returns what the SDK exported.
-func collect(t *testing.T, recs []beat.Record, opts ...otelbeat.Option) metricdata.ResourceMetrics {
+func collect(t *testing.T, records ...beat.Record) map[string]metricdata.Metrics {
 	t.Helper()
-
 	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-
-	h, err := otelbeat.New(mp.Meter("test"), opts...)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	ctx := context.Background()
-	for _, r := range recs {
-		h.Handle(ctx, r)
-	}
-
-	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(ctx, &rm); err != nil {
-		t.Fatalf("collect: %v", err)
-	}
-
-	return rm
-}
-
-func TestHandler_RecordsEveryInstrument(t *testing.T) {
-	rm := collect(t, []beat.Record{
-		{
-			Duration: 50 * time.Millisecond, Processed: 5, Missed: 2,
-			Mode: beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-		},
-		{Err: errors.New("x"), Mode: beat.ModeFixedRate, Outcome: beat.OutcomeError},
-		{
-			Err:  &beat.PanicError{Value: "boom"},
-			Mode: beat.ModeFixedDelay, Outcome: beat.OutcomePanic,
-		},
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() {
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
 	})
-
-	durations := histogram(t, rm, "beat.run.duration")
-	if got := totalCount(durations); got != 3 {
-		t.Errorf("total run count = %d, want 3", got)
+	h, err := otelbeat.MakeHandler(provider.Meter("test"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if c := countFor(durations, "panic", "fixed_delay"); c != 1 {
-		t.Errorf("panic/fixed_delay count = %d, want 1", c)
+	for _, r := range records {
+		h.Handle(context.Background(), r)
 	}
-	if c := countFor(durations, "error", "fixed_rate"); c != 1 {
-		t.Errorf("error/fixed_rate count = %d, want 1", c)
-	}
-
-	if v := valueFor(sum(t, rm, "beat.processed"), "ok", "fixed_rate"); v != 5 {
-		t.Errorf("processed ok/fixed_rate = %d, want 5", v)
-	}
-	if v := valueForMode(sum(t, rm, "beat.missed"), "fixed_rate"); v != 2 {
-		t.Errorf("missed fixed_rate = %d, want 2", v)
-	}
+	return read(t, reader)
 }
 
-func TestHandler_Saturation(t *testing.T) {
-	rm := collect(t, []beat.Record{{
-		Duration: time.Second, Period: 2 * time.Second,
-		Mode: beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-	}})
-
-	if got := sumFor(histogram(t, rm, "beat.run.saturation"), "ok", "fixed_rate"); got != 0.5 {
-		t.Errorf("saturation = %v, want 0.5", got)
+func read(t *testing.T, reader *sdkmetric.ManualReader) map[string]metricdata.Metrics {
+	t.Helper()
+	var resource metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &resource); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestHandler_Lateness(t *testing.T) {
-	scheduled := time.Now()
-
-	rm := collect(t, []beat.Record{{
-		ScheduledFor: scheduled,
-		Start:        scheduled.Add(250 * time.Millisecond),
-		Mode:         beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-	}})
-
-	if got := sumFor(histogram(t, rm, "beat.run.lateness"), "ok", "fixed_rate"); got != 0.25 {
-		t.Errorf("lateness = %v, want 0.25", got)
-	}
-}
-
-func TestHandler_LatenessNeverGoesNegative(t *testing.T) {
-	scheduled := time.Now()
-
-	// A clock stepping back can put the start before the point it aimed at.
-	rm := collect(t, []beat.Record{{
-		ScheduledFor: scheduled,
-		Start:        scheduled.Add(-time.Second),
-		Mode:         beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-	}})
-
-	if got := sumFor(histogram(t, rm, "beat.run.lateness"), "ok", "fixed_rate"); got != 0 {
-		t.Errorf("lateness = %v, want 0", got)
-	}
-}
-
-func TestHandler_SkipsRatiosItCannotCompute(t *testing.T) {
-	// No Period to divide by and no scheduled point to measure from.
-	rm := collect(t, []beat.Record{{
-		Duration: time.Second, Mode: beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-	}})
-
-	for _, name := range []string{"beat.run.saturation", "beat.run.lateness"} {
-		if h, ok := optionalHistogram(rm, name); ok && totalCount(h) != 0 {
-			t.Errorf("%s recorded %d points, want none", name, totalCount(h))
+	metrics := make(map[string]metricdata.Metrics)
+	for _, scope := range resource.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			metrics[m.Name] = m
 		}
 	}
-
-	// The instruments that always apply still recorded.
-	if got := totalCount(histogram(t, rm, "beat.run.duration")); got != 1 {
-		t.Errorf("duration count = %d, want 1", got)
-	}
+	return metrics
 }
 
-func TestHandler_OutcomeLabelsEveryInstrument(t *testing.T) {
-	rm := collect(t, []beat.Record{{
-		Duration: time.Second, Period: 2 * time.Second, Processed: 1, Missed: 1,
-		ScheduledFor: time.Now(), Start: time.Now(),
-		Mode: beat.ModeFixedRate, Outcome: beat.OutcomeTimeout,
-	}})
-
-	for _, name := range []string{"beat.run.duration", "beat.run.saturation", "beat.run.lateness"} {
-		if c := countFor(histogram(t, rm, name), "timeout", "fixed_rate"); c != 1 {
-			t.Errorf("%s timeout count = %d, want 1", name, c)
+func TestExecutionRecordedOnce(t *testing.T) {
+	now := time.Now()
+	metrics := collect(t, beat.Record{Result: job.Result{Start: now, Duration: time.Second, WorkDuration: time.Second, Processed: 1000, Outcome: job.OutcomeError}, ScheduledFor: now.Add(-250 * time.Millisecond), Mode: beat.ModeFixedRate, Missed: 2, Iteration: 42})
+	if len(metrics) != 4 {
+		t.Fatalf("instruments: %v", metrics)
+	}
+	for _, p := range metrics["job.run.duration"].Data.(metricdata.Histogram[float64]).DataPoints {
+		if p.Count != 1 || p.Sum != 1 {
+			t.Fatal(p)
 		}
 	}
-	if v := valueFor(sum(t, rm, "beat.processed"), "timeout", "fixed_rate"); v != 1 {
-		t.Errorf("beat.processed timeout value = %d, want 1", v)
+	processed := metrics["job.run.processed"].Data.(metricdata.Histogram[int64]).DataPoints
+	if len(processed) != 1 || processed[0].Count != 1 || processed[0].Sum != 1000 {
+		t.Fatal(processed)
 	}
-
-	// beat.missed is the exception: the points it counts belong to the gap
-	// before this run, so labelling them with this run's outcome would
-	// attribute the loss to whatever happened to come next.
-	missed := sum(t, rm, "beat.missed")
-	if v := valueForMode(missed, "fixed_rate"); v != 1 {
-		t.Errorf("beat.missed fixed_rate = %d, want 1", v)
+	late := metrics["beat.run.lateness"].Data.(metricdata.Histogram[float64]).DataPoints
+	if len(late) != 1 || late[0].Sum != .25 || late[0].Attributes.Len() != 1 {
+		t.Fatal(late)
 	}
-	if hasAttr(missed, "outcome") {
-		t.Error("beat.missed carries an outcome attribute, want mode only")
+	missed := metrics["beat.missed"].Data.(metricdata.Sum[int64])
+	if !missed.IsMonotonic || len(missed.DataPoints) != 1 || missed.DataPoints[0].Value != 2 || missed.DataPoints[0].Attributes.Len() != 1 {
+		t.Fatal(missed)
 	}
 }
 
-func TestHandler_WithOutcomeOverrides(t *testing.T) {
-	rm := collect(t,
-		[]beat.Record{{Mode: beat.ModeFixedRate, Outcome: beat.OutcomeError}},
-		otelbeat.WithOutcome(func(beat.Record) string { return "throttled" }),
+func TestLatenessMissingAndClockRollback(t *testing.T) {
+	now := time.Now()
+	metrics := collect(t,
+		beat.Record{ScheduledFor: now},
+		beat.Record{Result: job.Result{Start: now}},
+		beat.Record{Result: job.Result{Start: now}, ScheduledFor: now.Add(time.Second)},
 	)
-
-	if c := countFor(histogram(t, rm, "beat.run.duration"), "throttled", "fixed_rate"); c != 1 {
-		t.Errorf("custom outcome count = %d, want 1", c)
+	points := metrics["beat.run.lateness"].Data.(metricdata.Histogram[float64]).DataPoints
+	if len(points) != 1 || points[0].Count != 1 || points[0].Sum != 0 {
+		t.Fatal(points)
 	}
 }
 
-func TestDefaultOutcome(t *testing.T) {
-	if got := otelbeat.DefaultOutcome(beat.Record{Outcome: beat.OutcomeCanceled}); got != "canceled" {
-		t.Errorf("DefaultOutcome = %q, want canceled", got)
-	}
-
-	// A Record assembled by hand rather than by beat carries no outcome; an
-	// empty label would be worse than saying so.
-	if got := otelbeat.DefaultOutcome(beat.Record{}); got != "unknown" {
-		t.Errorf("DefaultOutcome of a bare Record = %q, want unknown", got)
-	}
+// Capture the API input rather than the SDK aggregation: OTel SDK 1.45/1.46
+// converts integer sums through float64, losing precision near MaxInt64.
+// See https://github.com/open-telemetry/opentelemetry-go/issues/8785.
+type missedCounter struct {
+	metric.Int64Counter
+	values []int64
 }
 
-func TestHandler_ClampsNegativeCounts(t *testing.T) {
-	// A Job that violates its contract with a negative count must not corrupt
-	// the monotonic counters.
-	rm := collect(t, []beat.Record{{
-		Processed: -5, Missed: -1, Mode: beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-	}})
-
-	if v := valueFor(sum(t, rm, "beat.processed"), "ok", "fixed_rate"); v != 0 {
-		t.Errorf("processed = %d, want 0 (negative clamped)", v)
-	}
-	if v := valueForMode(sum(t, rm, "beat.missed"), "fixed_rate"); v != 0 {
-		t.Errorf("missed = %d, want 0 (negative clamped)", v)
-	}
+func (c *missedCounter) Add(_ context.Context, value int64, _ ...metric.AddOption) {
+	c.values = append(c.values, value)
 }
 
-func TestNew_RequiresMeter(t *testing.T) {
-	if _, err := otelbeat.New(nil); err == nil {
-		t.Fatal("expected error for nil meter")
-	}
+type missedMeter struct {
+	metric.Meter
+	counter *missedCounter
 }
 
-// TestHandler_BucketBoundaries pins the boundaries the package asks for and
-// confirms the SDK honours them. They are advisory in the API, so this is the
-// test that says the advice is taken.
-func TestHandler_BucketBoundaries(t *testing.T) {
-	rm := collect(t, []beat.Record{{
-		Duration: time.Second, Period: 2 * time.Second,
-		ScheduledFor: time.Now(), Start: time.Now(),
-		Mode: beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-	}})
-
-	want := map[string][]float64{
-		"beat.run.duration": {
-			0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 600,
-		},
-		"beat.run.saturation": {
-			0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 2, 4,
-		},
-		"beat.run.lateness": {
-			0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60,
-		},
+func (m missedMeter) Int64Counter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	if name == "beat.missed" {
+		return m.counter, nil
 	}
+	return m.Meter.Int64Counter(name, opts...)
+}
 
-	for name, bounds := range want {
-		h := histogram(t, rm, name)
-		if len(h.DataPoints) != 1 {
-			t.Fatalf("%s has %d data points, want 1", name, len(h.DataPoints))
+func TestMissedConversion(t *testing.T) {
+	for _, tt := range []struct {
+		input uint64
+		want  int64
+	}{
+		{0, 0}, {1, 1}, {1<<53 + 1, 1<<53 + 1},
+		{math.MaxInt64 - 1, math.MaxInt64 - 1},
+		{math.MaxInt64, math.MaxInt64},
+		{math.MaxInt64 + 1, math.MaxInt64}, {math.MaxUint64, math.MaxInt64},
+	} {
+		counter := &missedCounter{}
+		h, err := otelbeat.MakeHandler(missedMeter{Meter: noop.NewMeterProvider().Meter("test"), counter: counter})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if got := h.DataPoints[0].Bounds; !slices.Equal(got, bounds) {
-			t.Errorf("%s bounds = %v, want %v", name, got, bounds)
+		h.Handle(context.Background(), beat.Record{Missed: tt.input, Mode: beat.ModeFixedRate})
+		if len(counter.values) != 1 || counter.values[0] != tt.want {
+			t.Fatalf("input %d: got %v, want one Add(%d)", tt.input, counter.values, tt.want)
 		}
 	}
 }
 
-// TestHandler_SaturationSeparatesTheDecisionRange is the regression the
-// boundaries exist for. On the SDK defaults - built for milliseconds and not
-// rescaled for a bare ratio - 0.1, 0.8 and 1.2 all landed in (0, 5], so no
-// quantile of this histogram could tell headroom from overrun.
-func TestHandler_SaturationSeparatesTheDecisionRange(t *testing.T) {
-	var recs []beat.Record
-	for _, sat := range []float64{0.1, 0.8, 1.2} {
-		recs = append(recs, beat.Record{
-			Duration: time.Duration(sat * float64(time.Second)),
-			Period:   time.Second,
-			Mode:     beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-		})
+func TestMissedSDKAccumulation(t *testing.T) {
+	metrics := collect(t,
+		beat.Record{Missed: 0, Mode: beat.ModeFixedRate},
+		beat.Record{Missed: 2, Mode: beat.ModeFixedRate},
+		beat.Record{Missed: 3, Mode: beat.ModeFixedRate},
+	)
+	sum := metrics["beat.missed"].Data.(metricdata.Sum[int64])
+	if !sum.IsMonotonic || len(sum.DataPoints) != 1 || sum.DataPoints[0].Value != 5 {
+		t.Fatalf("missed sum: %+v", sum)
 	}
-
-	if got := filled(histogram(t, collect(t, recs), "beat.run.saturation")); len(got) != 3 {
-		t.Errorf("0.1, 0.8 and 1.2 filled %d buckets (indices %v), want 3", len(got), got)
+	if _, ok := metrics["job.run.duration"]; ok {
+		t.Fatal("work never ran")
 	}
 }
 
-// TestHandler_LatenessSeparatesMillisecondsFromSeconds is the same regression
-// on the other seconds-valued histogram: 5ms and 3s used to share a bucket.
-func TestHandler_LatenessSeparatesMillisecondsFromSeconds(t *testing.T) {
-	base := time.Now()
-
-	var recs []beat.Record
-	for _, late := range []time.Duration{5 * time.Millisecond, 3 * time.Second} {
-		recs = append(recs, beat.Record{
-			ScheduledFor: base, Start: base.Add(late),
-			Mode: beat.ModeFixedRate, Outcome: beat.OutcomeOK,
-		})
-	}
-
-	if got := filled(histogram(t, collect(t, recs), "beat.run.lateness")); len(got) != 2 {
-		t.Errorf("5ms and 3s filled %d buckets (indices %v), want 2", len(got), got)
+func TestModesAreBounded(t *testing.T) {
+	metrics := collect(t, beat.Record{Mode: beat.ModeFixedRate}, beat.Record{Mode: beat.ModeFixedDelay}, beat.Record{Mode: "custom"}, beat.Record{})
+	points := metrics["beat.missed"].Data.(metricdata.Sum[int64]).DataPoints
+	if len(points) != 3 {
+		t.Fatal(points)
 	}
 }
 
-// filled reports the indices of the buckets that received anything.
-func filled(h metricdata.Histogram[float64]) []int {
-	var idx []int
-	for _, dp := range h.DataPoints {
-		for i, c := range dp.BucketCounts {
-			if c > 0 {
-				idx = append(idx, i)
+func TestBeatIntegration(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		reader := sdkmetric.NewManualReader()
+		provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+		defer provider.Shutdown(context.Background())
+		h, err := otelbeat.MakeHandler(provider.Meter("test"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner, err := job.MakeRunner(job.Config{}, func(context.Context) (int64, error) { time.Sleep(1500 * time.Millisecond); return 1000, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		completed := make(chan struct{}, 1)
+		count := 0
+		scheduler, err := beat.MakeBeat(beat.Config{Period: time.Second}, runner, beat.WithHandler(beat.MultiHandler(h, beat.HandlerFunc(func(context.Context, beat.Record) {
+			count++
+			if count == 2 {
+				completed <- struct{}{}
+			}
+		}))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := scheduler.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		<-completed
+		if err := scheduler.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		metrics := read(t, reader)
+		for _, p := range metrics["job.run.duration"].Data.(metricdata.Histogram[float64]).DataPoints {
+			if p.Count != 2 {
+				t.Fatalf("duplicate or missing delivery: %+v", p)
 			}
 		}
-	}
-
-	return idx
-}
-
-func histogram(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Histogram[float64] {
-	t.Helper()
-
-	h, ok := optionalHistogram(rm, name)
-	if !ok {
-		t.Fatalf("metric %q not found", name)
-	}
-
-	return h
-}
-
-func optionalHistogram(rm metricdata.ResourceMetrics, name string) (metricdata.Histogram[float64], bool) {
-	m, ok := findMetric(rm, name)
-	if !ok {
-		return metricdata.Histogram[float64]{}, false
-	}
-
-	h, ok := m.Data.(metricdata.Histogram[float64])
-
-	return h, ok
-}
-
-func sum(t *testing.T, rm metricdata.ResourceMetrics, name string) metricdata.Sum[int64] {
-	t.Helper()
-
-	m, ok := findMetric(rm, name)
-	if !ok {
-		t.Fatalf("metric %q not found", name)
-	}
-
-	s, ok := m.Data.(metricdata.Sum[int64])
-	if !ok {
-		t.Fatalf("%s is %T, want Sum[int64]", name, m.Data)
-	}
-
-	return s
-}
-
-func findMetric(rm metricdata.ResourceMetrics, name string) (metricdata.Metrics, bool) {
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			if m.Name == name {
-				return m, true
-			}
+		points := metrics["beat.missed"].Data.(metricdata.Sum[int64]).DataPoints
+		if len(points) != 1 || points[0].Value != 1 {
+			t.Fatal(points)
 		}
-	}
-
-	return metricdata.Metrics{}, false
+	})
 }
 
-func totalCount(h metricdata.Histogram[float64]) uint64 {
-	var total uint64
-	for _, dp := range h.DataPoints {
-		total += dp.Count
+func TestNilMeter(t *testing.T) {
+	if _, err := otelbeat.MakeHandler(nil); err == nil {
+		t.Fatal("nil accepted")
 	}
-
-	return total
-}
-
-func countFor(h metricdata.Histogram[float64], outcome, mode string) uint64 {
-	for _, dp := range h.DataPoints {
-		if matches(dp.Attributes, outcome, mode) {
-			return dp.Count
-		}
-	}
-
-	return 0
-}
-
-func sumFor(h metricdata.Histogram[float64], outcome, mode string) float64 {
-	for _, dp := range h.DataPoints {
-		if matches(dp.Attributes, outcome, mode) {
-			return dp.Sum
-		}
-	}
-
-	return -1
-}
-
-// valueForMode finds a data point by mode alone, for the counter that carries
-// nothing else.
-func valueForMode(s metricdata.Sum[int64], mode string) int64 {
-	for _, dp := range s.DataPoints {
-		if attr(dp.Attributes, "mode") == mode {
-			return dp.Value
-		}
-	}
-
-	return -1
-}
-
-func hasAttr(s metricdata.Sum[int64], key string) bool {
-	for _, dp := range s.DataPoints {
-		if _, ok := dp.Attributes.Value(attribute.Key(key)); ok {
-			return true
-		}
-	}
-
-	return false
-}
-
-func valueFor(s metricdata.Sum[int64], outcome, mode string) int64 {
-	for _, dp := range s.DataPoints {
-		if matches(dp.Attributes, outcome, mode) {
-			return dp.Value
-		}
-	}
-
-	return 0
-}
-
-func matches(set attribute.Set, outcome, mode string) bool {
-	return attr(set, "outcome") == outcome && attr(set, "mode") == mode
-}
-
-func attr(set attribute.Set, key string) string {
-	v, ok := set.Value(attribute.Key(key))
-	if !ok {
-		return ""
-	}
-
-	return v.AsString()
 }

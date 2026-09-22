@@ -1,0 +1,725 @@
+{
+  "uid": "job-beat",
+  "title": "Beat",
+  "description": "Completed execution, business throughput and optional beat scheduling. Classic OTel histograms; no logs/traces or runtime duplication. Counts are Prometheus estimates, not an audit ledger. One-shot delivery needs a separate persistent aggregation pipeline.",
+  "tags": [
+    "beat",
+    "otel"
+  ],
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(beat_missed_total, service_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {}
+      },
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(job_run_duration_seconds_count{service_name=~\"${service:regex}\"}, deployment_environment_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(job_run_duration_seconds_count{service_name=~\"${service:regex}\"}, k8s_cluster_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(job_run_duration_seconds_count{service_name=~\"${service:regex}\"}, k8s_namespace_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(job_run_duration_seconds_count{service_name=~\"${service:regex}\"}, instance)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "window",
+        "label": "Rate / quantile window",
+        "type": "custom",
+        "query": "1m,5m,15m,1h,6h",
+        "current": {
+          "text": "15m",
+          "value": "15m"
+        },
+        "options": [
+          {
+            "text": "1m",
+            "value": "1m",
+            "selected": false
+          },
+          {
+            "text": "5m",
+            "value": "5m",
+            "selected": false
+          },
+          {
+            "text": "15m",
+            "value": "15m",
+            "selected": true
+          },
+          {
+            "text": "1h",
+            "value": "1h",
+            "selected": false
+          },
+          {
+            "text": "6h",
+            "value": "6h",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "latency_phase",
+        "label": "Duration phase",
+        "type": "custom",
+        "query": "total,work,error_handler",
+        "current": {
+          "text": "total",
+          "value": "total"
+        },
+        "options": [
+          {
+            "text": "total",
+            "value": "total",
+            "selected": true
+          },
+          {
+            "text": "work",
+            "value": "work",
+            "selected": false
+          },
+          {
+            "text": "error_handler",
+            "value": "error_handler",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Completed iterations · selected range",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Estimated increase over the selected range, phase=total only: each completed attempt is counted once, including failures and cancellations. Prometheus extrapolation may produce fractional values before rounding. The first sample of a new series does not establish an increase.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "No observations",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"total\"}[$__range]))",
+          "legendFormat": "Iterations",
+          "editorMode": "code",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Processed items · selected range",
+      "type": "stat",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Sum of reported Processed values, including partial progress on failure. This is not a count of unique messages or proof of a committed business effect. Negative values are not recorded.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "No observations",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(job_run_processed_sum{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\"}[$__range]))",
+          "legendFormat": "Items",
+          "editorMode": "code",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Recovered panics · selected range",
+      "type": "stat",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Recovered panics only, phase=total. An unrecovered panic produces no Result. Missing observations are not replaced with zero.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "No observations",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(increase(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"total\",outcome=\"panic\"}[$__range]))) or (0 * (sum(increase(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"total\"}[$__range]))))",
+          "legendFormat": "Panics",
+          "editorMode": "code",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Throughput · items/s",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Processing throughput: rate of the reported item sum. Measurements arrive when a batch finishes, not as each item is processed. The smoothing window is selected separately. This is not the queue arrival rate.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: items/s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "No observations",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisCenteredZero": false,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(job_run_processed_sum{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\"}[$window]))",
+          "legendFormat": "Processed / s",
+          "editorMode": "code",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Error rate · failed attempts",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "(error + panic + timeout) / (ok + error + panic + timeout). Canceled and unknown outcomes are excluded. ErrorHandler has its own denominator; successful DLQ delivery does not make the work successful. With no attempts, the rate is undefined rather than 0%.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "No observations",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisCenteredZero": false,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "((sum(rate(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"total\",outcome=~\"error|panic|timeout\"}[$window]))) or (0 * (sum(rate(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"total\",outcome=~\"ok|error|panic|timeout\"}[$window]))))) / ((sum(rate(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"total\",outcome=~\"ok|error|panic|timeout\"}[$window]))) > 0)",
+          "legendFormat": "Work",
+          "editorMode": "code",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "((sum(rate(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"error_handler\",outcome=~\"error|panic|timeout\"}[$window]))) or (0 * (sum(rate(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"error_handler\",outcome=~\"ok|error|panic|timeout\"}[$window]))))) / ((sum(rate(job_run_duration_seconds_count{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"error_handler\",outcome=~\"ok|error|panic|timeout\"}[$window]))) > 0)",
+          "legendFormat": "ErrorHandler (among its calls)",
+          "editorMode": "code",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Execution duration · $latency_phase",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Quantiles for the selected phase: total includes ErrorHandler; work covers Func and middleware; error_handler covers the callback. Buckets are aggregated before calculating quantiles; replica quantiles are not averaged. Few attempts yield imprecise estimates. A blocked attempt produces no measurement until it returns.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "No observations",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisCenteredZero": false,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le)(rate(job_run_duration_seconds_bucket{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"$latency_phase\"}[$window])))",
+          "legendFormat": "p50",
+          "editorMode": "code",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(job_run_duration_seconds_bucket{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\",phase=\"$latency_phase\"}[$window])))",
+          "legendFormat": "p95",
+          "editorMode": "code",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Scheduling · beat only",
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 8,
+      "title": "Missed points · selected range",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Intentional backoff and points owned by other clusters are excluded. Missed points arrive with the next completed attempt; the final gap may never be delivered. This metric does not exist for standalone job.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "No observations",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(beat_missed_total{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\"}[$__range]))",
+          "legendFormat": "Missed points",
+          "editorMode": "code",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Start lateness · p95",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 6,
+        "y": 23,
+        "w": 18,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Nonnegative Start minus ScheduledFor. Offset is already included in the target. A slow Handler may cause missed points without lateness. This metric does not exist for standalone job.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "No observations",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false,
+            "axisCenteredZero": false,
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(beat_run_lateness_seconds_bucket{service_name=~\"${service:regex}\",deployment_environment_name=~\"${environment:regex}\",k8s_cluster_name=~\"${cluster:regex}\",k8s_namespace_name=~\"${namespace:regex}\",instance=~\"${instance:regex}\"}[$window])))",
+          "legendFormat": "p95 lateness",
+          "editorMode": "code",
+          "range": true,
+          "instant": false
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "title": "Job / CronJob · last result",
+      "type": "link",
+      "url": "/d/job-cronjob",
+      "targetBlank": false
+    }
+  ]
+}
