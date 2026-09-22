@@ -221,6 +221,16 @@ shutdown with a fresh, bounded context after work and observation finish.
 
 Execution statistics and scheduling panels for the metrics emitted by this adapter.
 
+### Large counter values
+
+The adapter caps each `Missed` increment at `math.MaxInt64` before passing it to
+OTel. This does not guarantee exact SDK aggregation at extreme values: OTel Go
+SDK 1.45/1.46 converts integer sums through `float64`, which can lose precision
+above 2^53 and report a negative value near MaxInt64 on amd64. See the
+[upstream issue](https://github.com/open-telemetry/opentelemetry-go/issues/8785).
+Cumulative signed sums can also overflow when multiple increments exceed their
+range. The adapter does not maintain its own cumulative counter.
+
 ## Acknowledgements
 
 Thanks to the authors and maintainers of [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go)

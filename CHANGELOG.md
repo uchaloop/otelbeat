@@ -21,6 +21,10 @@
 
 ### Fixed
 
+- Test unsigned missed-point conversion at the OTel API boundary, avoiding
+  architecture-dependent SDK rounding at MaxInt64; retain SDK accumulation coverage
+  and document the upstream limitation.
+
 - Cap unsigned missed-point increments at MaxInt64 before recording them in OTel.
 - Omit execution measurements for unstarted work and negative processed counts;
   omit lateness when either required timestamp is missing.

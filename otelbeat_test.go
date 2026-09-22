@@ -10,6 +10,8 @@ import (
 	"github.com/uchaloop/beat"
 	"github.com/uchaloop/job"
 	"github.com/uchaloop/otelbeat"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
@@ -86,16 +88,64 @@ func TestLatenessMissingAndClockRollback(t *testing.T) {
 	}
 }
 
+// Capture the API input rather than the SDK aggregation: OTel SDK 1.45/1.46
+// converts integer sums through float64, losing precision near MaxInt64.
+// See https://github.com/open-telemetry/opentelemetry-go/issues/8785.
+type missedCounter struct {
+	metric.Int64Counter
+	values []int64
+}
+
+func (c *missedCounter) Add(_ context.Context, value int64, _ ...metric.AddOption) {
+	c.values = append(c.values, value)
+}
+
+type missedMeter struct {
+	metric.Meter
+	counter *missedCounter
+}
+
+func (m missedMeter) Int64Counter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	if name == "beat.missed" {
+		return m.counter, nil
+	}
+	return m.Meter.Int64Counter(name, opts...)
+}
+
 func TestMissedConversion(t *testing.T) {
-	for _, n := range []uint64{0, 1, math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
-		metrics := collect(t, beat.Record{Missed: n, Mode: beat.ModeFixedRate})
-		points := metrics["beat.missed"].Data.(metricdata.Sum[int64]).DataPoints
-		if len(points) != 1 || points[0].Value != int64(min(n, uint64(math.MaxInt64))) {
-			t.Fatalf("%d: %+v", n, points)
+	for _, tt := range []struct {
+		input uint64
+		want  int64
+	}{
+		{0, 0}, {1, 1}, {1<<53 + 1, 1<<53 + 1},
+		{math.MaxInt64 - 1, math.MaxInt64 - 1},
+		{math.MaxInt64, math.MaxInt64},
+		{math.MaxInt64 + 1, math.MaxInt64}, {math.MaxUint64, math.MaxInt64},
+	} {
+		counter := &missedCounter{}
+		h, err := otelbeat.MakeHandler(missedMeter{Meter: noop.NewMeterProvider().Meter("test"), counter: counter})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if _, ok := metrics["job.run.duration"]; ok {
-			t.Fatal("work never ran")
+		h.Handle(context.Background(), beat.Record{Missed: tt.input, Mode: beat.ModeFixedRate})
+		if len(counter.values) != 1 || counter.values[0] != tt.want {
+			t.Fatalf("input %d: got %v, want one Add(%d)", tt.input, counter.values, tt.want)
 		}
+	}
+}
+
+func TestMissedSDKAccumulation(t *testing.T) {
+	metrics := collect(t,
+		beat.Record{Missed: 0, Mode: beat.ModeFixedRate},
+		beat.Record{Missed: 2, Mode: beat.ModeFixedRate},
+		beat.Record{Missed: 3, Mode: beat.ModeFixedRate},
+	)
+	sum := metrics["beat.missed"].Data.(metricdata.Sum[int64])
+	if !sum.IsMonotonic || len(sum.DataPoints) != 1 || sum.DataPoints[0].Value != 5 {
+		t.Fatalf("missed sum: %+v", sum)
+	}
+	if _, ok := metrics["job.run.duration"]; ok {
+		t.Fatal("work never ran")
 	}
 }
 
